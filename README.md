@@ -149,8 +149,13 @@ docker run -p 9002:9002 -p 3000:3000 dolthub/dolt-workbench:latest
 ```
 
 Then you can connect in the UI on port 3000...make sure to port-forward like above. Here are some screenshots:
+<img width="706" alt="Screenshot 2025-05-26 at 12 22 45 PM" src="https://github.com/user-attachments/assets/88f4fbde-b4a4-449b-9221-72694acf2e67" />
 
+<img width="703" alt="Screenshot 2025-05-26 at 12 23 02 PM" src="https://github.com/user-attachments/assets/6264b63e-22a1-4ac9-852f-1de5eb33d2bc" />
 
+<img width="698" alt="Screenshot 2025-05-26 at 12 23 19 PM" src="https://github.com/user-attachments/assets/49bb9e18-4243-440d-8646-d557fc0a456f" />
+
+<img width="1426" alt="Screenshot 2025-05-26 at 12 21 50 PM" src="https://github.com/user-attachments/assets/cfb79ecd-7ae9-42e1-8fbb-bae9a1ff1ccf" />
 
 
 Useful links on Dolt:
