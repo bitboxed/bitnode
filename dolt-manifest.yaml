@@ -22,6 +22,7 @@ data:
       host: 0.0.0.0
       port: 3306
       max_connections: 128
+    data_dir: .
   dolt-1.yaml: |
     log_level: trace
     cluster:
@@ -38,6 +39,7 @@ data:
       host: 0.0.0.0
       port: 3306
       max_connections: 128
+    data_dir: .
   dolt-2.yaml: |
     log_level: trace
     cluster:
@@ -54,6 +56,7 @@ data:
       host: 0.0.0.0
       port: 3306
       max_connections: 128
+    data_dir: .
 ---
 apiVersion: v1
 kind: Service
@@ -79,9 +82,10 @@ metadata:
     app: dolt
 spec:
   ports:
-    - port: 3306
-      name: dolt
-  type: ClusterIP
+    - name: dolt
+      protocol: TCP
+      port: 3306
+      targetPort: 3306
   selector:
     app: dolt
     dolthub.com/cluster_role: primary
@@ -135,7 +139,7 @@ spec:
                         - dolt
                 topologyKey: kubernetes.io/hostname
       containers:
-        - image: dolthub/dolt:1.7.6
+        - image: dolthub/dolt:1.54.2
           imagePullPolicy: IfNotPresent
           workingDir: /db
           env:
@@ -161,8 +165,6 @@ spec:
             - sql-server
             - --config
             - config.yaml
-            - --data-dir
-            - .
           volumeMounts:
             - name: config
               mountPath: /etc/doltdb
@@ -172,7 +174,7 @@ spec:
             - containerPort: 3306
               name: dolt
       initContainers:
-        - image: dolthub/dolt:1.7.6
+        - image: dolthub/dolt:1.54.2
           imagePullPolicy: IfNotPresent
           workingDir: /db
           env:
@@ -221,21 +223,6 @@ spec:
         resources:
           requests:
             storage: 1Gi
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: dolt-lb
-  namespace: dolt-cluster-example
-spec:
-  selector:
-    app: dolt-lb
-  type: LoadBalancer
-  ports:
-    - name: dolt-port
-      protocol: TCP
-      port: 3306
-      targetPort: 3306
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
