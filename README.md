@@ -29,16 +29,16 @@ multipass mount ~/Github/bitnode k3s:~/bitnode
 multipass shell k3s
 ubuntu@k3s:~$ curl -sfL https://get.k3s.io | sh -
 
-# get token & ip of k3s
+# open new terminal for k3s-worker node get token & ip of k3s for adding in the new node
 multipass exec k3s sudo cat /var/lib/rancher/k3s/server/node-token
 multipass info k3s | grep -i ip
 
-# create a k3s-worker node in a new terminal and add it to the cluster
+# create a k3s-worker node in a new terminal and add it to the cluster (using your k3s ip and k3s token)
 multipass launch --name k3s-worker --memory 2G --disk 10G
 multipass shell k3s-worker
 ubuntu@k3s-worker:~$ curl -sfL https://get.k3s.io | K3S_URL=https://192.168.64.4:6443 K3S_TOKEN="hs48af...947fh4::server:3tfkwjd...4jed73" sh -
 
-# verify the k3 nodes are running
+# verify the k3 nodes are running now back on the k3s ternminal
 ubuntu@k3s:~$ sudo kubectl get nodes -o wide
 NAME         STATUS   ROLES                  AGE   VERSION        INTERNAL-IP    EXTERNAL-IP   OS-IMAGE             KERNEL-VERSION     CONTAINER-RUNTIME
 k3s          Ready    control-plane,master   35h   v1.32.5+k3s1   192.168.64.2   <none>        Ubuntu 24.04.2 LTS   6.8.0-60-generic   containerd://2.0.5-k3s1.32
@@ -55,6 +55,7 @@ If your node will be running Dolt, here's how you can setup it up quickly with [
 # shell into k3s node and create dolt cluster example namespace
 multipass shell k3s
 sudo kubectl create namespace dolt-cluster-example
+namespace/dolt-cluster-example created
 
 # create dolt admin secret
 sudo kubectl \
@@ -63,6 +64,7 @@ sudo kubectl \
   dolt-credentials \
   --from-literal=admin-user=root \
   --from-literal=admin-password=password
+secret/dolt-credentials created
 
 # create dolt
 sudo kubectl apply -f ~/bitnode/dolt-manifest.yaml
@@ -88,7 +90,14 @@ Next, we'll apply the Dolt `primary` label, using [doltclusterctl](https://githu
 ***note***: we're currently having issues w/ the arm64 version of this library, so we've compiled them and tagged them in our fork [here](https://github.com/bitboxed/doltclusterctl?tab=readme-ov-file#compilation-and-publishing-to-dockerhub).
 
 ```
-sudo kubectl run -i --tty   -n dolt-cluster-example   --image priley86/doltclusterctl:arm64   --image-pull-policy Always   --restart=Never   --rm   --override-type=strategic   --overrides '
+sudo kubectl run -i --tty \
+    -n dolt-cluster-example \
+    --image priley86/doltclusterctl:arm64 \
+    --image-pull-policy Always \
+    --restart=Never \
+    --rm \
+    --override-type=strategic \
+    --overrides '
 {
   "apiVersion": "v1",
   "kind": "Pod",
@@ -116,15 +125,16 @@ sudo kubectl run -i --tty   -n dolt-cluster-example   --image priley86/doltclust
     }]
   }
 }
-'   doltclusterctl -- -n dolt-cluster-example applyprimarylabels dolt
-If you don't see a command prompt, try pressing enter.
+' doltclusterctl -- -n dolt-cluster-example applyprimarylabels dolt
+
+2025/06/05 21:59:18 running applyprimarylabels against dolt-cluster-example/dolt
 2025/06/04 23:13:02 applied primary label to dolt-cluster-example/dolt-0
 2025/06/04 23:13:02 applied standby label to dolt-cluster-example/dolt-1
 2025/06/04 23:13:02 applied standby label to dolt-cluster-example/dolt-2
 pod "doltclusterctl" deleted
 ```
 
-Let's quickly verify we connect to Dolt and things are running well on the cluster.
+Let's quickly verify we can connect to Dolt and things are running well on the cluster.
 ```
 ubuntu@k3s:~$ sudo kubectl get services --all-namespaces
 NAMESPACE              NAME             TYPE           CLUSTER-IP     EXTERNAL-IP                 PORT(S)                      AGE
@@ -138,20 +148,23 @@ kube-system            traefik          LoadBalancer   10.43.150.35   192.168.64
 
 ubuntu@k3s:~$ sudo apt update
 ubuntu@k3s:~$ sudo apt install -y mysql-client
-ubuntu@k3s:~$ mysql -u root -p -h 10.43.90.208 -D mysql --protocol=TCP
+
+# try logging in to the pod running dolt-0, using the local cluster ip address shown above for example
+ubuntu@k3s:~$ mysql -u root -p -h 10.42.1.21 -D mysql --protocol=TCP
 ```
 
-If you can login, you're up and running with Dolt on k3s! :star:
+If you can now login w/ the sample user (`root`) and pw (`password`) created in the secret from before, now you're up and running with Dolt on k3s! :star:
 
 #### dolt-workbench
 
 [dolt-workbench](https://github.com/dolthub/dolt-workbench) is a very useful tool for visualizing your Dolt databases. Here's how you can run it and connect to it alongside your cluster.
 
-Edit your `/etc/hosts` on your host system like below to match the domains used in our sample [dolt-workbench.yaml](dolt-workbench.yaml), and the ip address of your k3s-worker (and Traefik load balancer external ip shown above):
+Edit your `/etc/hosts` on your host system like below to match the domains used in our sample [dolt-workbench.yaml](dolt-workbench.yaml), and the internal ip address of your k3s-worker node (and Traefik load balancer external ip shown above):
 ```
+sudo vi /etc/hosts
+
  127.0.0.1   localhost
- 192.168.64.3 app.dolt.localdev
- 192.168.64.3 api.dolt.localdev
+ 192.168.64.3 app.dolt.localdev api.dolt.localdev
  ```
 
 Next, apply the [dolt-workbench.yaml](dolt-workbench.yaml) on your k3s cluster:
