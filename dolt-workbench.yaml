@@ -20,7 +20,7 @@ spec:
         image: priley86/dolt-workbench:arm64
         env:
         - name: GRAPHQLAPI_URL
-          value: "http://api.dolt.localdev/graphql"
+          value: "http://api.dolt.test/graphql"
         ports:
         - containerPort: 9002
         - containerPort: 3000
@@ -53,7 +53,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.entrypoints: web
 spec:
   rules:
-  - host: app.dolt.localdev
+  - host: app.dolt.test
     http:
       paths:
       - path: /
@@ -74,7 +74,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.entrypoints: web
 spec:
   rules:
-  - host: api.dolt.localdev
+  - host: api.dolt.test
     http:
       paths:
       - path: /

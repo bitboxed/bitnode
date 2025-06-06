@@ -54,6 +54,7 @@ If your node will be running Dolt, here's how you can setup it up quickly with [
 ```
 # shell into k3s node and create dolt cluster example namespace
 multipass shell k3s
+
 sudo kubectl create namespace dolt-cluster-example
 namespace/dolt-cluster-example created
 
@@ -86,7 +87,7 @@ dolt-1                           1/1     Running   0          18h   10.42.0.12  
 dolt-2                           1/1     Running   0          18h   10.42.1.20   k3s-worker   <none>           <none>
 ```
 
-Next, we'll apply the Dolt `primary` label, using [doltclusterctl](https://github.com/dolthub/doltclusterctl).
+Next, we'll apply the Dolt `cluster_role=primary` label to the primary dolt pod, using [doltclusterctl](https://github.com/dolthub/doltclusterctl).
 ***note***: we're currently having issues w/ the arm64 version of this library, so we've compiled them and tagged them in our fork [here](https://github.com/bitboxed/doltclusterctl?tab=readme-ov-file#compilation-and-publishing-to-dockerhub).
 
 ```
@@ -159,13 +160,14 @@ If you can now login w/ the sample user (`root`) and pw (`password`) created in 
 
 [dolt-workbench](https://github.com/dolthub/dolt-workbench) is a very useful tool for visualizing your Dolt databases. Here's how you can run it and connect to it alongside your cluster.
 
-Edit your `/etc/hosts` on your host system like below to match the domains used in our sample [dolt-workbench.yaml](dolt-workbench.yaml), and the internal ip address of your k3s-worker node (and Traefik load balancer external ip shown above):
+Edit your `/etc/hosts` on your host system like below to match the domains used in our sample [dolt-workbench.yaml](dolt-workbench.yaml), and the internal ip address of your k3s-worker node (or retrieve it by running `multipass info k3s-worker | grep IPv4 | awk '{print $2}'`):
 ```
 sudo vi /etc/hosts
 
  127.0.0.1   localhost
- 192.168.64.3 app.dolt.localdev api.dolt.localdev
+ 192.168.64.3 app.dolt.test api.dolt.test
  ```
+
 
 Next, apply the [dolt-workbench.yaml](dolt-workbench.yaml) on your k3s cluster:
 ```
@@ -178,14 +180,46 @@ ingress.networking.k8s.io/dolt-workbench-app-ingress created
 ingress.networking.k8s.io/dolt-workbench-api-ingress created
 ```
 
-Afterwards, you should now be able to view Dolt Workbench at `http://app.dolt.localdev/` and login to your dolt databases locally within the cluster using the admin user/pw secret mentioned before, e.g: `mysql://root:password@dolt:3306` (***note***: `dolt` is service name for our primary dolt database and can be used as the host local to the cluster).
+Afterwards, you should now be able to view Dolt Workbench at `http://app.dolt.test/` and login to your dolt databases locally within the cluster using the admin user/pw secret mentioned before, e.g: `mysql://root:password@dolt:3306` (***note***: `dolt` is service name for our primary dolt database and can be used as the host local to the cluster).
 <img width="1265" alt="Screenshot 2025-06-05 at 2 49 45 PM" src="https://github.com/user-attachments/assets/5ff61a16-9380-486e-98ac-a5c5cef6527a" />
 <img width="1397" alt="Screenshot 2025-06-05 at 2 50 29 PM" src="https://github.com/user-attachments/assets/541f5b27-d45f-47d1-bc6e-44f347b1c52e" />
 <img width="1397" alt="Screenshot 2025-06-05 at 2 50 35 PM" src="https://github.com/user-attachments/assets/0138c44a-c2bf-4a20-a8d0-4acf88c85fb8" />
 <img width="1397" alt="Screenshot 2025-06-05 at 2 51 07 PM" src="https://github.com/user-attachments/assets/b5b63ebb-b7f2-4568-a1bc-44abb3a61a14" />
 
 
+#### Troubleshooting connectivity
+Sometimes Chrome on macOS does not respect `/etc/hosts` with multipass b/c macOS uses multilayered DNS resolution, so the following can also help ensure this works as expected using `dnsmasq`:
+```
+brew install dnsmasq
+# Configure dnsmasq to route all dolt.test domains to your K3s node IP
+echo "address=/.dolt.test/$(multipass info k3s-worker | grep IPv4 | awk '{print $2}')" > $(brew --prefix)/etc/dnsmasq.conf
+sudo brew services start dnsmasq
 
+# Create resolver config for dolt.test to use dnsmasq
+sudo mkdir -p /etc/resolver
+echo "nameserver 127.0.0.1" | sudo tee /etc/resolver/dolt.test > /dev/null
+```
+
+If your k3s ip changes, you can also do:
+```
+echo "address=/.dolt.test/NEW_IP" > "$(brew --prefix)/etc/dnsmasq.conf"
+sudo brew services restart dnsmasq
+```
+
+Flush OS DNS and verify dns resolution w/ `dig`:
+```
+sudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder
+
+dig app.dolt.test
+
+;; ANSWER SECTION:
+app.dolt.test. 0 IN A 192.168.64.3
+```
+
+Restart Chrome and ensure you can again load `http://app.dolt.test`. 
+
+
+#### Buidling dolt-workbench from source
 Rebuilding dolt-workbench from source is quite easy should you need to make any changes. Here is a simple set of steps to get your going:
 ```
 git clone https://github.com/dolthub/dolt-workbench.git
