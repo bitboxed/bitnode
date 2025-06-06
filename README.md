@@ -2,7 +2,9 @@
 
 Bitboxed is building better roads and bridges from web2 and traditional public cloud to a decentralized, permissionless world.
 
-Bitnode is a core set of containers, kubernetes manifests, and utils for running the core bitnode server with various decentralized platform services: storage, compute, networking, databases, and other cloud services. These services are being developed with decentralized infrastructure and public mining & consumption in mind, and therefore will remain free and open source to the public. All private infra or otherwise closed source derivative works should remain separate. 
+Bitnode is a core set of containers, kubernetes manifests, and utils for running the core bitnode server with various decentralized platform services: storage, compute, networking, databases, and other cloud services. These services are being developed with decentralized infrastructure and public mining & consumption in mind, and therefore will remain free and open source to the public.  
+
+While Bitboxed may leverage some of these tools for public or hybrid cloud use cases, all private infra or otherwise closed source derivative works should remain separate. 
 
 ## Local setup with k3s
 
@@ -17,7 +19,7 @@ git clone https://github.com/bitboxed/bitnode.git
 cd bitnode
 ```
 
-Setup multipass and k3s. There is a fantastic guide [here](https://dev.to/chillaranand/local-kubernetes-cluster-with-k3s-on-mac-m1-i57). Here's a list of steps i've used here:
+Setup multipass and k3s. Here is a minimal set of steps to get started, or you can follow along in the guide [here](https://dev.to/chillaranand/local-kubernetes-cluster-with-k3s-on-mac-m1-i57) on setting up k3s:
 ```
 brew install --cask multipass
 multipass launch --name k3s --mem 2G --disk 10G
@@ -47,7 +49,7 @@ k3s-worker   Ready    <none>                 35h   v1.32.5+k3s1   192.168.64.3  
 
 ### Dolt DB
 
-[Dolt](https://github.com/dolthub/dolt) is a new SQL database that has a lot of powerful features, and enables rapid development andd collaboration with "git-like" features for databases. The [storage engine](https://docs.dolthub.com/architecture/storage-engine) also makes use of a novel prolly tree structure, which enables very fast diffs (highly useful for decentralized use cases).
+[Dolt](https://github.com/dolthub/dolt) is a new SQL database that has a lot of powerful features, and enables rapid development and collaboration with "git-like" features for databases. The [storage engine](https://docs.dolthub.com/architecture/storage-engine) also makes use of a novel prolly tree structure, which enables very fast diffs (highly useful for many decentralized applications).
 
 If your node will be running Dolt, here's how you can setup it up quickly with [Direct-to-Standby Replication](https://docs.dolthub.com/sql-reference/server/replication#replication) on your k3s nodes.
 
@@ -181,10 +183,12 @@ ingress.networking.k8s.io/dolt-workbench-api-ingress created
 ```
 
 Afterwards, you should now be able to view Dolt Workbench at `http://app.dolt.test/` and login to your dolt databases locally within the cluster using the admin user/pw secret mentioned before, e.g: `mysql://root:password@dolt:3306` (***note***: `dolt` is service name for our primary dolt database and can be used as the host local to the cluster).
-<img width="1265" alt="Screenshot 2025-06-05 at 2 49 45 PM" src="https://github.com/user-attachments/assets/5ff61a16-9380-486e-98ac-a5c5cef6527a" />
-<img width="1397" alt="Screenshot 2025-06-05 at 2 50 29 PM" src="https://github.com/user-attachments/assets/541f5b27-d45f-47d1-bc6e-44f347b1c52e" />
-<img width="1397" alt="Screenshot 2025-06-05 at 2 50 35 PM" src="https://github.com/user-attachments/assets/0138c44a-c2bf-4a20-a8d0-4acf88c85fb8" />
-<img width="1397" alt="Screenshot 2025-06-05 at 2 51 07 PM" src="https://github.com/user-attachments/assets/b5b63ebb-b7f2-4568-a1bc-44abb3a61a14" />
+<img width="1233" alt="Screenshot 2025-06-05 at 9 47 18 PM" src="https://github.com/user-attachments/assets/90e5b174-feca-4420-89eb-aacd36138f45" />
+<img width="1233" alt="Screenshot 2025-06-05 at 9 47 40 PM" src="https://github.com/user-attachments/assets/4ea840f1-4421-437e-a3d6-0c50aca23ff3" />
+<img width="1233" alt="Screenshot 2025-06-05 at 9 47 46 PM" src="https://github.com/user-attachments/assets/c4689aa4-277d-4dec-9785-718351886584" />
+<img width="1233" alt="Screenshot 2025-06-05 at 9 48 02 PM" src="https://github.com/user-attachments/assets/54088319-8f3d-4fbe-a20d-d89fdac0981a" />
+<img width="1233" alt="Screenshot 2025-06-05 at 9 48 09 PM" src="https://github.com/user-attachments/assets/250f063c-64a4-44e3-a213-d7c7d415008e" />
+
 
 
 #### Troubleshooting connectivity
@@ -285,4 +289,4 @@ multipass purge
 
 ## License
 
-Bitnode is currently licensed under the Apache 2.0 License, which explicitly grants users the right to patent derivate works, but also protects us from any form of patent retaliation. This is free and open source software. 
+Bitnode is currently licensed under the Apache 2.0 License, which explicitly grants users the right to patent their derivate works, but also protects us from any form of patent retaliation should we choose to patent our own derivatives. This is free and open source software. 
