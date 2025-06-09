@@ -57,21 +57,11 @@ If your node will be running Dolt, here's how you can setup it up quickly with [
 # shell into k3s node and create dolt cluster example namespace
 multipass shell k3s
 
-sudo kubectl create namespace dolt-cluster-example
-namespace/dolt-cluster-example created
-
-# create dolt admin secret
-sudo kubectl \
-  -n dolt-cluster-example \
-  create secret generic \
-  dolt-credentials \
-  --from-literal=admin-user=root \
-  --from-literal=admin-password=password
-secret/dolt-credentials created
-
 # create dolt
 sudo kubectl apply -f ~/bitnode/dolt-manifest.yaml
 
+namespace/dolt-cluster-example created
+secret/dolt-credentials created
 configmap/dolt created
 service/dolt-internal created
 service/dolt created
@@ -153,7 +143,7 @@ ubuntu@k3s:~$ sudo apt update
 ubuntu@k3s:~$ sudo apt install -y mysql-client
 
 # try logging in to the pod running dolt-0, using the local cluster ip address shown above for example
-ubuntu@k3s:~$ mysql -u root -p -h 10.42.1.21 -D mysql --protocol=TCP
+ubuntu@k3s:~$ mysql -u root -ppassword -h 10.42.1.21 -D mysql --protocol=TCP
 ```
 
 If you can now login w/ the sample user (`root`) and pw (`password`) created in the secret from before, now you're up and running with Dolt on k3s! :star:
@@ -238,6 +228,149 @@ docker tag dolt-workbench:arm64 yourusername/dolt-workbench:arm64
 docker push yourusername/dolt-workbench:arm64
 ```
 
+#### ProxySQL setup with Dolt DB
+
+The best way to network with your active/passive Dolt cluster is now via a proxy which can proxy read and write traffic.
+
+Here's how to quickly get proxysql running with sample dolt cluster here:
+```
+ubuntu@k3s:~$ sudo kubectl apply -f ~/bitnode/dolt-proxysql.yaml
+configmap/proxysql-config created
+deployment.apps/proxysql created
+service/proxysql created
+```
+
+This will do the following:
+* create a proxysql service pod on port `3306` and configure its `mysql_servers` with dolt and dolt-ro db's (active/passive)
+* create a `monitor` user within dolt that proxysql can connect to for monitoring purposes
+* create a sample `stnduser` that we can use to connect to the ProxySQL server with to perform queries (note: this user is also created in dolt in addition to the ProxySQL `mysql_users` table)
+
+Let's validate this now:
+
+```
+ubuntu@k3s:~$ sudo kubectl get pods -n dolt-cluster-example -o wide
+NAME                              READY   STATUS    RESTARTS   AGE    IP           NODE         NOMINATED NODE   READINESS GATES
+dolt-0                            1/1     Running   0          3d3h   10.42.1.4    k3s-worker   <none>           <none>
+dolt-1                            1/1     Running   0          3d3h   10.42.0.10   k3s          <none>           <none>
+dolt-2                            1/1     Running   0          3d3h   10.42.1.6    k3s-worker   <none>           <none>
+dolt-workbench-65d7b5b845-qn6kn   1/1     Running   0          31m    10.42.1.18   k3s-worker   <none>           <none>
+proxysql-788f9987b5-xm6n2         1/1     Running   0          6s     10.42.1.23   k3s-worker   <none>           <none>
+
+# validate proxysql `monitor` user created in dolt-0 (the same can be done in dolt-1, dolt-2)
+ubuntu@k3s:~$ mysql -u root -ppassword -h 10.42.1.4 -D mysql
+mysql> SELECT user, host, plugin FROM mysql.user;
++---------------------+-----------+-----------------------+
+| user                | host      | plugin                |
++---------------------+-----------+-----------------------+
+| stnduser            | %         | mysql_native_password |
+| root                | %         | mysql_native_password |
+| event_scheduler     | localhost | mysql_native_password |
+| __dolt_local_user__ | localhost | mysql_native_password |
+| monitor             | %         | mysql_native_password |
++---------------------+-----------+-----------------------+
+
+
+# connect to proxysql mysql instance and review mysql_servers
+ubuntu@k3s:~ sudo kubectl exec -it -n dolt-cluster-example <proxysql-pod> -- mysql -h 127.0.0.1 -P6032 -uadmin -padmin
+
+MySQL [(none)]> select * from mysql_users;
++----------+----------+--------+---------+-------------------+----------------+---------------+------------------------+--------------+---------+----------+-----------------+------------+---------+
+| username | password | active | use_ssl | default_hostgroup | default_schema | schema_locked | transaction_persistent | fast_forward | backend | frontend | max_connections | attributes | comment |
++----------+----------+--------+---------+-------------------+----------------+---------------+------------------------+--------------+---------+----------+-----------------+------------+---------+
+| monitor  | monitor  | 1      | 0       | 10                |                | 0             | 1                      | 0            | 1       | 1        | 10000           |            |         |
+| stnduser | stnduser | 1      | 0       | 10                |                | 0             | 1                      | 0            | 1       | 1        | 10000           |            |         |
++----------+----------+--------+---------+-------------------+----------------+---------------+------------------------+--------------+---------+----------+-----------------+------------+---------+
+
+MySQL [(none)]> SELECT * FROM mysql_servers;
++--------------+----------+------+-----------+--------+--------+-------------+-----------------+---------------------+---------+----------------+---------+
+| hostgroup_id | hostname | port | gtid_port | status | weight | compression | max_connections | max_replication_lag | use_ssl | max_latency_ms | comment |
++--------------+----------+------+-----------+--------+--------+-------------+-----------------+---------------------+---------+----------------+---------+
+| 10           | dolt     | 3306 | 0         | ONLINE | 1      | 0           | 1000            | 0                   | 0       | 0              |         |
+| 20           | dolt-ro  | 3306 | 0         | ONLINE | 1      | 0           | 1000            | 0                   | 0       | 0              |         |
++--------------+----------+------+-----------+--------+--------+-------------+-----------------+---------------------+---------+----------------+---------+
+
+MySQL [(none)]> SELECT * FROM monitor.mysql_server_connect_log ORDER BY time_start_us DESC LIMIT 3;
++----------+------+------------------+-------------------------+---------------+
+| hostname | port | time_start_us    | connect_success_time_us | connect_error |
++----------+------+------------------+-------------------------+---------------+
+| dolt-ro  | 3306 | 1749446009975247 | 2888                    | NULL          |
+| dolt     | 3306 | 1749446009963602 | 1420                    | NULL          |
+| dolt-ro  | 3306 | 1749445889975643 | 2304                    | NULL          |
++----------+------+------------------+-------------------------+---------------+
+
+MySQL [(none)]> SELECT * FROM monitor.mysql_server_ping_log ORDER BY time_start_us DESC LIMIT 3;
++----------+------+------------------+----------------------+------------+
+| hostname | port | time_start_us    | ping_success_time_us | ping_error |
++----------+------+------------------+----------------------+------------+
+| dolt     | 3306 | 1749446123406597 | 556                  | NULL       |
+| dolt-ro  | 3306 | 1749446123405973 | 1352                 | NULL       |
+| dolt     | 3306 | 1749446115405269 | 334                  | NULL       |
++----------+------+------------------+----------------------+------------+
+```
+
+With your cluster configured correctly for ProxySQL, we can now test a simple write to ProxySQL using our `stnduser`:
+
+```
+# connect to proxysql as stnduser
+ubuntu@k3s:~$ sudo kubectl exec -it -n dolt-cluster-example proxysql-cb8c95595-q9z9n -- mysql -h 127.0.0.1 -P6033 -ustnduser -pstnduser
+
+MySQL [(none)]> CREATE DATABASE dolt_sample_db;
+Query OK, 1 row affected (0.101 sec)
+
+MySQL [(none)]> USE dolt_sample_db;
+Database changed
+
+MySQL [dolt_sample_db]> create table t1 (pk int primary key);
+Query OK, 0 rows affected (0.008 sec)
+```
+
+Validate the write was replicated:
+```
+ubuntu@k3s:~$ mysql -u stnduser -pstnduser -h <dolt-0-ip-address> -D mysql
+mysql> use dolt_sample_db;
+Database changed
+mysql> show tables;
++--------------------------+
+| Tables_in_dolt_sample_db |
++--------------------------+
+| t1                       |
++--------------------------+
+1 row in set (0.01 sec)
+
+# add a dolt commit
+mysql> call dolt_commit('-Am', 'create table t1');
++----------------------------------+
+| hash                             |
++----------------------------------+
+| kebsuag1fo5ueplgfd2tea9cke65fp6v |
++----------------------------------+
+1 row in set (0.01 sec)
+
+# validate on the read-only dolt-1 db that the commit was added
+ubuntu@k3s:~$ mysql -u stnduser -pstnduser -h <dolt-1-ip-address> -D mysql
+mysql> use dolt_sample_db;
+Database changed
+mysql> show tables;
++--------------------------+
+| Tables_in_dolt_sample_db |
++--------------------------+
+| t1                       |
++--------------------------+
+1 row in set (0.01 sec)
+
+# validate its read-only
+mysql> call dolt_commit('-Am', 'create table t1');
+ERROR 1105 (HY000): database server is set to read only mode
+
+mysql> select * from dolt_log;
++----------------------------------+----------------------------+----------------------------+---------------------+----------------------------+--------------+
+| commit_hash                      | committer                  | email                      | date                | message                    | commit_order |
++----------------------------------+----------------------------+----------------------------+---------------------+----------------------------+--------------+
+| kebsuag1fo5ueplgfd2tea9cke65fp6v | stnduser                   | stnduser@%                 | 2025-06-09 22:57:58 | create table t1            |            2 |
+| is20hjt3l004n94lb81267qusnu707ei | dolt kubernetes deployment | dolt@kubernetes.deployment | 2025-06-09 22:51:10 | Initialize data repository |            1 |
++----------------------------------+----------------------------+----------------------------+---------------------+----------------------------+--------------+
+```
+
 ### Helpful commands
 
 View multipass nodes:
@@ -270,10 +403,21 @@ Shell into an container:
 sudo kubectl exec -it -n dolt-cluster-example dolt-workbench-67656f4764-6mxbb -- sh
 ```
 
+Shell into a db container:
+```
+sudo kubectl exec -it -n dolt-cluster-example dolt-0 -- bash
+```
+
 Describe a pod or view its logs for debugging purposes:
 ```
 sudo kubectl describe pods/dolt-0 -n dolt-cluster-example
 sudo kubectl logs pods/dolt-0 -n dolt-cluster-example
+```
+
+Deleting your entire namespace so you can "start over" in k3s:
+```
+sudo kubectl delete all -n dolt-cluster-example --all
+sudo kubectl apply -f ~/bitnode/dolt-manifest.yaml
 ```
 
 Deleting a pod:

@@ -1,0 +1,137 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: proxysql-config
+  namespace: dolt-cluster-example
+data:
+  proxysql.cnf: |
+    datadir="/var/lib/proxysql"
+    admin_variables=
+    {
+      admin_credentials="admin:admin"
+      mysql_ifaces="0.0.0.0:6032"
+    }
+
+    mysql_variables=
+    {
+      threads=4
+    }
+
+    mysql_servers = (
+      { address="dolt", port=3306, hostgroup=10, max_connections=1000 },
+      { address="dolt-ro", port=3306, hostgroup=20, max_connections=1000 }
+    )
+
+    mysql_users = (
+      { username = "monitor", password = "monitor", default_hostgroup = 10, active = 1 },
+      { username = "stnduser", password = "stnduser", default_hostgroup = 10, active = 1 }
+    )
+
+    mysql_replication_hostgroups = (
+      { writer_hostgroup=10, reader_hostgroup=20, comment="dolt-cluster" }
+    )
+
+    mysql_monitor =
+    {
+      username = "monitor"
+      password = "monitor"
+      connect_interval = 2000
+      ping_interval = 2000
+      read_only_interval = 2000
+    }
+
+    mysql_query_rules = (
+      { rule_id=1, active=1, match_pattern="^SELECT", destination_hostgroup=20, apply=1 },
+      { rule_id=2, active=1, match_pattern=".*", destination_hostgroup=10, apply=1 }
+    )
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: proxysql
+  namespace: dolt-cluster-example
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: proxysql
+  template:
+    metadata:
+      labels:
+        app: proxysql
+    spec:
+      initContainers:
+        - name: create-monitor-user
+          image: mysql:8
+          env:
+            - name: DOLT_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: dolt-credentials
+                  key: admin-user
+            - name: DOLT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: dolt-credentials
+                  key: admin-password
+          command: ["/bin/sh", "-c"]
+          args:
+            # note on: for HOST in dolt dolt-ro; do  ... dolt-ro is standby replicated,
+            # is read-only, and already receives the "monitor" user by replication in our case 
+            - |
+              for HOST in dolt; do
+                until mysql -h $HOST -u"$DOLT_USERNAME" -p"$DOLT_PASSWORD" -e "SELECT 1;"; do
+                  echo "Waiting for $HOST..." && sleep 2
+                done
+                mysql -h $HOST -u"$DOLT_USERNAME" -p"$DOLT_PASSWORD" -e "
+                  CREATE USER IF NOT EXISTS 'monitor'@'%' IDENTIFIED BY 'monitor';
+                  GRANT SELECT ON sys.* TO 'monitor'@'%';
+                  GRANT SELECT ON performance_schema.* TO 'monitor'@'%';
+                  GRANT USAGE, REPLICATION CLIENT ON *.* TO 'monitor'@'%';
+                  CREATE USER IF NOT EXISTS 'stnduser'@'%' IDENTIFIED BY 'stnduser';
+                  GRANT ALL PRIVILEGES ON *.* TO 'stnduser'@'%';
+                "
+              done
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 50m
+              memory: 128Mi      
+      containers:
+        - name: proxysql
+          image: proxysql/proxysql:2.5.2
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 6032  # admin
+            - containerPort: 6033  # MySQL client port
+          volumeMounts:
+            - name: config
+              mountPath: /etc/proxysql.cnf
+              subPath: proxysql.cnf
+            - name: data
+              mountPath: /var/lib/proxysql
+      volumes:
+        - name: config
+          configMap:
+            name: proxysql-config
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: proxysql
+  namespace: dolt-cluster-example
+spec:
+  selector:
+    app: proxysql
+  ports:
+    - name: mysql
+      port: 3306
+      targetPort: 6033
+    - name: admin
+      port: 6032
+      targetPort: 6032

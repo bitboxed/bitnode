@@ -1,0 +1,60 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: dolt-failover-job
+  namespace: dolt-cluster-example
+spec:
+  template:
+    spec:
+      serviceAccountName: doltclusterctl
+      containers:
+      - name: doltclusterctl
+        image: priley86/doltclusterctl:arm64
+        imagePullPolicy: Always
+        env:
+        - name: DOLT_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: dolt-credentials
+              key: admin-user
+        - name: DOLT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: dolt-credentials
+              key: admin-password
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+          echo "[*] Running doltclusterctl graceful failover"
+          doltclusterctl -n dolt-cluster-example gracefailover dolt
+          echo "[✓] Failover complete."
+      restartPolicy: Never
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: dolt-failover-monitor
+  namespace: dolt-cluster-example
+spec:
+  schedule: "*/1 * * * *"  # Every minute
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: doltclusterctl
+          containers:
+          - name: healthcheck
+            image: busybox
+            command:
+            - /bin/sh
+            - -c
+            - |
+              if ! timeout 5 nc -z dolt 3306; then
+                echo "Dolt primary unhealthy. Triggering failover..."
+                kubectl create job --from=job/dolt-failover-job dolt-failover-triggered
+              else
+                echo "Dolt primary is healthy."
+              fi
+          restartPolicy: OnFailure
