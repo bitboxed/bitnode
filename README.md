@@ -371,6 +371,82 @@ mysql> select * from dolt_log;
 +----------------------------------+----------------------------+----------------------------+---------------------+----------------------------+--------------+
 ```
 
+#### Dolt failover
+
+At the time of this writing, a formal kubernetes operator does not yet exist, but a simple Dolt failover cron job has been provided, which will attempt to fail the primary dolt db over to the standby db in case of primary failure. This job currently runs the `promotestandby` command, which is more aggressive than the `gracefulfailover` command (and will still succeed if a new standby is not assigned or is down). You can read more about doltclusterctl operations [here](https://github.com/bitboxed/doltclusterctl?tab=readme-ov-file#operations).
+
+Usage:
+```
+ubuntu@k3s:~$ sudo kubectl apply -f ~/bitnode/dolt-failover.yaml
+cronjob.batch/dolt-failover-job created
+cronjob.batch/dolt-failover-monitor created
+
+ubuntu@k3s:~$ sudo kubectl get cronjobs -n dolt-cluster-example
+NAME                    SCHEDULE      TIMEZONE   SUSPEND   ACTIVE   LAST SCHEDULE   AGE
+dolt-failover-job       @yearly       <none>     True      0        <none>          2m23s
+dolt-failover-monitor   */1 * * * *   <none>     False     0        45s             68m
+
+ubuntu@k3s:~$ sudo kubectl get jobs -n dolt-cluster-example
+dolt-failover-monitor-29162827   Complete   1/1           3s         66s
+dolt-failover-monitor-29162828   Complete   1/1           3s         6s
+
+ubuntu@k3s:~$ sudo kubectl logs jobs/dolt-failover-monitor-29162828 -n dolt-cluster-example
+Dolt primary is healthy.
+```
+
+We should see the "Dolt primary is healthy" message when the cluster is healthy. By default, the monitor cron job runs every minute.
+
+We can manually fail the primary over to test by doing the following:
+```
+ubuntu@k3s:~$ sudo kubectl create job --from=cronjob/dolt-failover-job dolt-failover-manual -n dolt-cluster-example
+job.batch/dolt-failover-manual created
+
+ubuntu@k3s:~$ sudo kubectl logs jobs/dolt-failover-manual -n dolt-cluster-example
+[*] Running doltclusterctl promotestandby
+2025/06/12 23:26:26 running promotestandby against dolt-cluster-example/dolt
+2025/06/12 23:26:26 found standby to promote: dolt-cluster-example/dolt-1
+2025/06/12 23:26:26 labeled all pods as standby
+2025/06/12 23:26:26 called dolt_assume_cluster_role primary on dolt-cluster-example/dolt-1
+2025/06/12 23:26:26 applied primary label to dolt-cluster-example/dolt-1
+[✓] Failover complete.
+
+# reboot the proxysql pod (this is already handled in the monitor cron job)
+ubuntu@k3s:~$ sudo kubectl rollout restart deployment proxysql -n dolt-cluster-example
+deployment.apps/proxysql restarted
+```
+
+Now verify the failover worked as expected:
+```
+# verify dolt-1 now has the cluster_role=primary label
+ubuntu@k3s:~$ sudo kubectl get pods  -n dolt-cluster-example --show-labels
+NAME                                   READY   STATUS      RESTARTS   AGE     LABELS
+dolt-0                                 1/1     Running     0          3d      app=dolt,apps.kubernetes.io/pod-index=0,controller-revision-hash=dolt-747bfdfc7d,dolthub.com/cluster_role=standby,statefulset.kubernetes.io/pod-name=dolt-0
+dolt-1                                 1/1     Running     0          3d      app=dolt,apps.kubernetes.io/pod-index=1,controller-revision-hash=dolt-747bfdfc7d,dolthub.com/cluster_role=primary,statefulset.kubernetes.io/pod-name=dolt-1
+dolt-2                                 1/1     Running     0          3d      app=dolt,apps.kubernetes.io/pod-index=2,controller-revision-hash=dolt-747bfdfc7d,dolthub.com/cluster_role=standby,statefulset.kubernetes.io/pod-name=dolt-2
+
+# verify we can still write with proxysql
+# note: the dolt/dolt-ro service names and service cluster_role labels used in proxysql automatically ensure the correct dbs are targeted after failover
+
+ubuntu@k3s:~$ sudo kubectl exec -it -n dolt-cluster-example <proxysql-pod-name> -- mysql -h 127.0.0.1 -P6033 -ustnduser -pstnduser
+MySQL [(none)]> use dolt_sample_db;
+Database changed
+MySQL [dolt_sample_db]> create table t2 (pk int primary key);
+Query OK, 0 rows affected (0.020 sec)
+
+# validate the write occurred and still replicated in the dolt db's...
+ubuntu@k3s:~$ mysql -u stnduser -pstnduser -h <dolt-db-ip> -D mysql
+MySQL [(none)]> use dolt_sample_db;
+Database changed
+mysql> show tables;
++--------------------------+
+| Tables_in_dolt_sample_db |
++--------------------------+
+| t1                       |
+| t2                       |
++--------------------------+
+```
+
+
 ### Helpful commands
 
 View multipass nodes:

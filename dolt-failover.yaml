@@ -1,36 +1,41 @@
 apiVersion: batch/v1
-kind: Job
+kind: CronJob
 metadata:
   name: dolt-failover-job
   namespace: dolt-cluster-example
 spec:
-  template:
+  schedule: "@yearly"  # Very infrequent
+  suspend: true        # Prevents automatic execution
+  jobTemplate:
     spec:
-      serviceAccountName: doltclusterctl
-      containers:
-      - name: doltclusterctl
-        image: priley86/doltclusterctl:arm64
-        imagePullPolicy: Always
-        env:
-        - name: DOLT_USERNAME
-          valueFrom:
-            secretKeyRef:
-              name: dolt-credentials
-              key: admin-user
-        - name: DOLT_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: dolt-credentials
-              key: admin-password
-        command:
-        - /bin/sh
-        - -c
-        - |
-          set -e
-          echo "[*] Running doltclusterctl graceful failover"
-          doltclusterctl -n dolt-cluster-example gracefailover dolt
-          echo "[✓] Failover complete."
-      restartPolicy: Never
+      backoffLimit: 0
+      template:
+        spec:
+          serviceAccountName: doltclusterctl
+          containers:
+          - name: doltclusterctl
+            image: priley86/doltclusterctl:arm64
+            imagePullPolicy: Always
+            env:
+            - name: DOLT_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: dolt-credentials
+                  key: admin-user
+            - name: DOLT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: dolt-credentials
+                  key: admin-password
+            command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              echo "[*] Running doltclusterctl promotestandby"
+              doltclusterctl -n dolt-cluster-example promotestandby dolt
+              echo "[✓] Failover complete."
+          restartPolicy: Never
 ---
 apiVersion: batch/v1
 kind: CronJob
@@ -52,8 +57,16 @@ spec:
             - -c
             - |
               if ! timeout 5 nc -z dolt 3306; then
+                timestamp=$(date +%Y%m%d%H%M%S)
+                job_name="dolt-failover-triggered-$timestamp"
                 echo "Dolt primary unhealthy. Triggering failover..."
-                kubectl create job --from=job/dolt-failover-job dolt-failover-triggered
+                kubectl create job --from=cronjob/dolt-failover-job $job_name -n dolt-cluster-example
+
+                # Wait for the failover Job to complete (60s timeout)
+                kubectl wait --for=condition=complete job/$job_name -n dolt-cluster-example --timeout=60s
+
+                echo "[*] Restarting proxysql"
+                kubectl rollout restart deployment proxysql -n dolt-cluster-example
               else
                 echo "Dolt primary is healthy."
               fi
