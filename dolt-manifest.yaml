@@ -38,6 +38,15 @@ data:
       port: 3306
       max_connections: 128
     data_dir: .
+  dolt-0-remote.yaml: |
+    log_level: trace
+    remotesapi:
+        port: 8090
+    listener:
+      host: 0.0.0.0
+      port: 3307
+      max_connections: 128
+    data_dir: .
   dolt-1.yaml: |
     log_level: trace
     cluster:
@@ -55,6 +64,15 @@ data:
       port: 3306
       max_connections: 128
     data_dir: .
+  dolt-1-remote.yaml: |
+    log_level: trace
+    remotesapi:
+        port: 8090
+    listener:
+      host: 0.0.0.0
+      port: 3307
+      max_connections: 128
+    data_dir: .
   dolt-2.yaml: |
     log_level: trace
     cluster:
@@ -70,6 +88,15 @@ data:
     listener:
       host: 0.0.0.0
       port: 3306
+      max_connections: 128
+    data_dir: .
+  dolt-2-remote.yaml: |
+    log_level: trace
+    remotesapi:
+        port: 8090
+    listener:
+      host: 0.0.0.0
+      port: 3307
       max_connections: 128
     data_dir: .
 ---
@@ -133,6 +160,7 @@ spec:
   selector:
     matchLabels:
       app: dolt
+  podManagementPolicy: Parallel
   serviceName: dolt-internal
   updateStrategy:
     type: OnDelete
@@ -157,6 +185,7 @@ spec:
         - image: dolthub/dolt:1.54.2
           imagePullPolicy: IfNotPresent
           workingDir: /db
+          name: dolt
           env:
             - name: DOLT_ROOT_PATH
               value: /db
@@ -174,7 +203,6 @@ spec:
                 secretKeyRef:
                   name: dolt-credentials
                   key: admin-password
-          name: dolt
           command:
             - /usr/local/bin/dolt
             - sql-server
@@ -185,9 +213,45 @@ spec:
               mountPath: /etc/doltdb
             - name: dolt-data
               mountPath: /db
+            - name: dolt-data-remote
+              mountPath: /dbremote                            
           ports:
             - containerPort: 3306
               name: dolt
+        - image: dolthub/dolt:1.54.2
+          imagePullPolicy: IfNotPresent
+          workingDir: /dbremote
+          name: dolt-remote
+          env:
+            - name: DOLT_ROOT_PATH
+              value: /dbremote
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: DOLT_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: dolt-credentials
+                  key: admin-user
+            - name: DOLT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: dolt-credentials
+                  key: admin-password
+          command:
+            - /usr/local/bin/dolt
+            - sql-server
+            - --config
+            - config.yaml
+          volumeMounts:
+            - name: config
+              mountPath: /etc/doltdb
+            - name: dolt-data-remote
+              mountPath: /dbremote
+          ports:
+            - containerPort: 3307
+              name: dolt-remote
       initContainers:
         - image: dolthub/dolt:1.54.2
           imagePullPolicy: IfNotPresent
@@ -215,6 +279,8 @@ spec:
               mountPath: /etc/doltdb
             - name: dolt-data
               mountPath: /db
+            - name: dolt-data-remote
+              mountPath: /dbremote
           command:
             - /bin/sh
             - -c
@@ -222,9 +288,12 @@ spec:
               dolt config --global --add user.name "dolt kubernetes deployment"
               dolt config --global --add user.email "dolt@kubernetes.deployment"
               cp /etc/doltdb/${POD_NAME}.yaml config.yaml
+              cp /etc/doltdb/${POD_NAME}-remote.yaml /dbremote/config.yaml
               if [ -n "$DOLT_PASSWORD" -a ! -f .doltcfg/privileges.db ]; then
                 dolt sql -q "create user '$DOLT_USERNAME' identified by '$DOLT_PASSWORD'; grant all privileges on *.* to '$DOLT_USERNAME' with grant option;"
               fi
+              dolt sql -q "set @@persist.dolt_replicate_to_remote = 'downstream'"
+              dolt sql -q "set @@persist.dolt_replication_remote_url_template = 'file:///dbremote/{database}';"
       volumes:
         - name: config
           configMap:
@@ -232,6 +301,14 @@ spec:
   volumeClaimTemplates:
     - metadata:
         name: dolt-data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 1Gi
+    - metadata:
+        name: dolt-data-remote
       spec:
         accessModes:
           - ReadWriteOnce
